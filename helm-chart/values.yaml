@@ -1,0 +1,77 @@
+# Service Configuration
+serviceName: "microservice"
+namespace: "default"
+replicaCount: 2
+
+image:
+  repository: your-ecr-repo
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Application Configuration
+app:
+  port: 8080
+  healthPath: "/health"
+  readyPath: "/ready"
+  env: []
+    # - name: CUSTOM_VAR
+    #   value: "custom-value"
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+  hosts:
+    - host: microservices.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+database:
+  postgresql:
+    host: ""
+    username: ""
+    password: ""
+    port: 5432
+    database: "microservices"
+  mysql:
+    host: ""
+    username: ""
+    password: ""
+    port: 3306
+    database: "microservices"
+  redis:
+    host: ""
+    password: ""
+    port: 6379
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

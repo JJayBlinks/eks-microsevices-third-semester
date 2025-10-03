@@ -1,0 +1,7 @@
+###commenting out the terraform.tfvars files to avoid pushing sensitive data to github
+###.terraform/
+###.terraform.lock.hcl
+###*.tfstate
+###*.tfstate.backup
+###terraform.tfvars
+###*.tfvars.json

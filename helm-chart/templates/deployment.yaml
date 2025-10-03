@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "microservice.fullname" . }}
+  labels:
+    {{- include "microservice.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "microservice.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "microservice.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.app.port }}
+              protocol: TCP
+          env:
+            {{- if .Values.database.postgresql.host }}
+            - name: RETAIL_ORDERS_PERSISTENCE_ENDPOINT
+              value: "{{ .Values.database.postgresql.host }}:5432"
+            - name: RETAIL_ORDERS_PERSISTENCE_NAME
+              value: {{ .Values.database.postgresql.database | quote }}
+            - name: RETAIL_ORDERS_PERSISTENCE_USERNAME
+              value: {{ .Values.database.postgresql.username | quote }}
+            - name: RETAIL_ORDERS_PERSISTENCE_PASSWORD
+              value: {{ .Values.database.postgresql.password | quote }}
+            {{- end }}
+            {{- if .Values.database.mysql.host }}
+            - name: RETAIL_CATALOG_PERSISTENCE_ENDPOINT
+              value: "{{ .Values.database.mysql.host }}:3306"
+            - name: RETAIL_CATALOG_PERSISTENCE_PASSWORD
+              value: {{ .Values.database.mysql.password | quote }}
+            {{- end }}
+            {{- if .Values.database.redis.host }}
+            - name: REDIS_HOST
+              value: {{ .Values.database.redis.host | quote }}
+            - name: REDIS_PASSWORD
+              value: {{ .Values.database.redis.password | quote }}
+            - name: RETAIL_CHECKOUT_PERSISTENCE_REDIS_URL
+              value: "redis://{{ .Values.database.redis.host }}:6379"
+            {{- end }}
+            {{- if .Values.database.dynamodb.enabled }}
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            {{- end }}
+            {{- range .Values.app.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.app.healthPath }}
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.app.readyPath }}
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
