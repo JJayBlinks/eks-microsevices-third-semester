@@ -1,6 +1,6 @@
 # Alternative: Single bucket with environment prefixes
 resource "aws_s3_bucket" "terraform_state" {
-  bucket = "microservices-eks-terraform-state"
+  bucket = "microservices-eks-terraform-state-joy"
 }
 
 resource "aws_s3_bucket_versioning" "terraform_state" {

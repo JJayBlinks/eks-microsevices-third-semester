@@ -1,0 +1,128 @@
+name: Application Deployment
+
+on:
+  workflow_run:
+    workflows: ["Terraform Infrastructure"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to (optional). If provided, the job will try to read Terraform outputs from environments/<env> to determine cluster name.'
+        required: false
+
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: retail-store
+
+jobs:
+  deploy-app:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Install helper tools
+      if: ${{ github.event_name == 'workflow_run' }}
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y jq unzip curl || true
+
+    - name: Auto-detect environment & cluster from triggering workflow run
+      if: ${{ github.event_name == 'workflow_run' }}
+      env:
+        RUN_ID: ${{ github.event.workflow_run.id }}
+        REPO: ${{ github.repository }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "Triggered by workflow_run id=$RUN_ID"
+        api_url="https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/artifacts"
+        echo "Querying artifacts: $api_url"
+        artifacts_json=$(curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "$api_url")
+        artifact_id=$(echo "$artifacts_json" | jq -r '.artifacts[] | select(.name|test("tf-run-info-")) | .id' | head -n1)
+        if [ -z "$artifact_id" ] || [ "$artifact_id" = "null" ]; then
+          echo "No tf-run-info artifact found on the triggering run; falling back to default EKS_CLUSTER_NAME=${EKS_CLUSTER_NAME}"
+          exit 0
+        fi
+        echo "Found artifact id: $artifact_id"
+        download_url="https://api.github.com/repos/$REPO/actions/artifacts/$artifact_id/zip"
+        echo "Downloading artifact..."
+        curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" -o artifact.zip "$download_url"
+        unzip -o artifact.zip -d artifact || true
+        # try to find run-info.txt inside extracted content
+        info_file=$(find artifact -type f -name 'run-info.txt' | head -n1)
+        if [ -n "$info_file" ]; then
+          echo "Sourcing run info from $info_file"
+          # export variables from file
+          sed -n 's/^\([^=]*\)=\(.*\)$/export \1="\2"/p' "$info_file" > artifact/env.sh
+          source artifact/env.sh
+          echo "Detected environment: $environment"
+          if [ -n "$cluster" ]; then
+            echo "Detected cluster: $cluster"
+            echo "EKS_CLUSTER_NAME=$cluster" >> $GITHUB_ENV
+          fi
+        else
+          echo "No run-info.txt found inside artifact."
+        fi
+
+    - name: (optional) Resolve EKS cluster name from Terraform outputs
+      if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment != '' }}
+      working-directory: environments/${{ github.event.inputs.environment }}
+      run: |
+        # Attempt to read an output named `eks_cluster_name` or `cluster_name` from terraform outputs
+        if terraform output -json >/dev/null 2>&1; then
+          cluster=$(terraform output -raw eks_cluster_name 2>/dev/null || terraform output -raw cluster_name 2>/dev/null || true)
+          if [ -n "$cluster" ]; then
+            echo "EKS_CLUSTER_NAME=$cluster" >> $GITHUB_ENV
+            echo "Resolved cluster name from terraform outputs: $cluster"
+          else
+            echo "No cluster output found in Terraform outputs; using default EKS_CLUSTER_NAME=${{ env.EKS_CLUSTER_NAME }}"
+          fi
+        else
+          echo "No terraform outputs available in environments/${{ github.event.inputs.environment }}; using default cluster name"
+        fi
+
+    - name: Update kubeconfig
+      run: |
+        echo "Using AWS region: ${AWS_REGION}, EKS cluster: ${EKS_CLUSTER_NAME}"
+        aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME}
+
+    - name: Deploy Application
+      run: |
+        echo "Deploying retail store application..."
+        kubectl apply -f https://github.com/aws-containers/retail-store-sample-app/releases/latest/download/kubernetes.yaml || true
+        echo "Waiting for deployments to be available (timeout 600s)..."
+        kubectl wait --for=condition=available deployments --all --timeout=600s || true
+        echo "Application deployment step completed"
+
+    - name: Get Application Status
+      run: |
+        echo "=== Pods Status ==="
+        kubectl get pods --all-namespaces || true
+        echo "" 
+        echo "=== Services ==="
+        kubectl get svc --all-namespaces || true
+        echo ""
+        echo "=== Application URL ==="
+        LB_URL=$(kubectl get svc ui -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+        if [ ! -z "$LB_URL" ]; then
+          echo "Application URL: http://$LB_URL"
+        else
+          echo "LoadBalancer URL not ready yet. Check again in a few minutes."
+        fi
+
+    - name: Test Application Health
+      run: |
+        echo "Testing application health by checking pod readiness..."
+        kubectl get pods --all-namespaces | grep -E "(Running|Ready)" || true
+        echo "Health check completed"
