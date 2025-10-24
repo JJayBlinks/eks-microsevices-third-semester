@@ -47,16 +47,33 @@ jobs:
     - name: Terraform Init
       working-directory: environments/${{ matrix.environment }}
       run: |
+        set -o pipefail
         terraform init -backend-config="bucket=${{ env.BACKEND_BUCKET }}" \
                         -backend-config="key=${{ matrix.environment }}/terraform.tfstate" \
                         -backend-config="region=${{ env.AWS_REGION }}" \
                         -backend-config="dynamodb_table=${{ env.BACKEND_DYNAMODB_TABLE }}" \
-                        -backend-config="encrypt=true"
+                        -backend-config="encrypt=true" 2>&1 | tee init.txt
+
+    - name: Upload init log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tf-init-${{ matrix.environment }}
+        path: environments/${{ matrix.environment }}/init.txt
 
     - name: Terraform Plan
       working-directory: environments/${{ matrix.environment }}
-      run: terraform plan -no-color
+      run: |
+        set -o pipefail
+        terraform plan -no-color 2>&1 | tee plan.txt
       # Do not hide Terraform plan errors: fail the job so problems are visible
+
+    - name: Upload plan artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tf-plan-${{ matrix.environment }}
+        path: environments/${{ matrix.environment }}/plan.txt
 
   terraform-apply:
     name: Terraform Apply
@@ -85,21 +102,37 @@ jobs:
     - name: Terraform Init
       working-directory: environments/${{ matrix.environment }}
       run: |
+        set -o pipefail
         terraform init -backend-config="bucket=${{ env.BACKEND_BUCKET }}" \
                         -backend-config="key=${{ matrix.environment }}/terraform.tfstate" \
                         -backend-config="region=${{ env.AWS_REGION }}" \
                         -backend-config="dynamodb_table=${{ env.BACKEND_DYNAMODB_TABLE }}" \
-                        -backend-config="encrypt=true"
+                        -backend-config="encrypt=true" 2>&1 | tee init.txt
+
+    - name: Upload init log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tf-init-${{ matrix.environment }}
+        path: environments/${{ matrix.environment }}/init.txt
 
     - name: Terraform Apply
       working-directory: environments/${{ matrix.environment }}
       run: |
         # If workflow_dispatch provided an environment, only run that one
         if [ -n "${{ github.event.inputs.environment }}" ] && [ "${{ github.event.inputs.environment }}" != "${{ matrix.environment }}" ]; then
-          echo "Skipping ${matrix.environment} because workflow_dispatch requested ${ { github.event.inputs.environment } }"
+          echo "Skipping ${{ matrix.environment }} because workflow_dispatch requested ${{ github.event.inputs.environment }}"
           exit 0
         fi
-        terraform apply -auto-approve
+        set -o pipefail
+        terraform apply -auto-approve 2>&1 | tee apply.txt
+
+    - name: Upload apply artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tf-apply-${{ matrix.environment }}
+        path: environments/${{ matrix.environment }}/apply.txt
 
     - name: Output cluster info (if present)
       working-directory: environments/${{ matrix.environment }}
