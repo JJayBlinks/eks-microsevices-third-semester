@@ -7,3 +7,6 @@ terraform {
     encrypt        = true
   }
 }
+
+
+# Note: The S3 bucket and DynamoDB table are defined in the
